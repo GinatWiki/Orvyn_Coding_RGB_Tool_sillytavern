@@ -1,7 +1,7 @@
-/* rgb-codex-light SillyTavern bridge.
+/* Orvyn RGB Tool - SillyTavern bridge.
  *
  * A third-party SillyTavern extension that forwards UI events to the
- * rgb-codex-light local event bridge (default http://127.0.0.1:7355/event).
+ * Orvyn RGB Tool local event bridge (default http://127.0.0.1:7355/event).
  * The bridge maps these events to states on the physical RGB light:
  *
  *   story_advance       -> BUSY
@@ -12,19 +12,19 @@
  *   idle                -> IDLE
  *
  * Install: copy this folder into
- * <SillyTavern>/public/scripts/extensions/third-party/rgb-codex-light-bridge/
- * and restart SillyTavern, or host it on GitHub and use
+ * <SillyTavern>/public/scripts/extensions/third-party/orvyn-rgb-tool-sillytavern/
+ * and restart SillyTavern, or install this repository from GitHub via
  * Extensions -> Install extension from URL.
  */
 
 (function () {
     'use strict';
-    if (window.__RGB_CODEX_LIGHT_BRIDGE__) {
+    if (window.__ORVYN_RGB_TOOL_SILLYTAVERN__) {
         return;
     }
-    window.__RGB_CODEX_LIGHT_BRIDGE__ = true;
+    window.__ORVYN_RGB_TOOL_SILLYTAVERN__ = true;
 
-    const EXTENSION_NAME = 'rgb-codex-light-bridge';
+    const EXTENSION_NAME = 'orvyn-rgb-tool-sillytavern';
     const DEFAULT_SETTINGS = {
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
@@ -138,36 +138,36 @@
         const container = document.getElementById('extensions_settings');
         if (!container || typeof window.jQuery === 'undefined') return;
         const $ = window.jQuery;
-        if ($('#rgb-codex-light-bridge-settings').length) return;
+        if ($('#orvyn-rgb-tool-sillytavern-settings').length) return;
 
         const html = '' +
-            '<div id="rgb-codex-light-bridge-settings" class="inline-drawer">' +
+            '<div id="orvyn-rgb-tool-sillytavern-settings" class="inline-drawer">' +
             '  <div class="inline-drawer-toggle">' +
-            '    <span>RGB Codex Light Bridge</span>' +
+            '    <span>Orvyn RGB Tool SillyTavern Bridge</span>' +
             '    <div class="inline-drawer-icon fa-solid fa-circle-plus down"></div>' +
             '  </div>' +
             '  <div class="inline-drawer-content">' +
-            '    <label class="checkbox_label" for="rgb-codex-light-enabled">' +
-            '      <input id="rgb-codex-light-enabled" type="checkbox">Enabled' +
+            '    <label class="checkbox_label" for="orvyn-rgb-tool-sillytavern-enabled">' +
+            '      <input id="orvyn-rgb-tool-sillytavern-enabled" type="checkbox">Enabled' +
             '    </label>' +
-            '    <label for="rgb-codex-light-url">Bridge URL</label>' +
-            '    <input id="rgb-codex-light-url" type="text" value="' + escapeHtml(settings.bridgeUrl) + '">' +
-            '    <label for="rgb-codex-light-token">Token (optional)</label>' +
-            '    <input id="rgb-codex-light-token" type="password" value="' + escapeHtml(settings.token) + '">' +
+            '    <label for="orvyn-rgb-tool-sillytavern-url">Bridge URL</label>' +
+            '    <input id="orvyn-rgb-tool-sillytavern-url" type="text" value="' + escapeHtml(settings.bridgeUrl) + '">' +
+            '    <label for="orvyn-rgb-tool-sillytavern-token">Token (optional)</label>' +
+            '    <input id="orvyn-rgb-tool-sillytavern-token" type="password" value="' + escapeHtml(settings.token) + '">' +
             '    <small>Events are POSTed to {bridgeUrl}/event.</small>' +
             '  </div>' +
             '</div>';
 
         container.insertAdjacentHTML('beforeend', html);
-        $('#rgb-codex-light-enabled').prop('checked', settings.enabled).on('change', function () {
+        $('#orvyn-rgb-tool-sillytavern-enabled').prop('checked', settings.enabled).on('change', function () {
             settings.enabled = this.checked;
             saveSettings();
         });
-        $('#rgb-codex-light-url').on('input', function () {
+        $('#orvyn-rgb-tool-sillytavern-url').on('input', function () {
             settings.bridgeUrl = this.value;
             saveSettings();
         });
-        $('#rgb-codex-light-token').on('input', function () {
+        $('#orvyn-rgb-tool-sillytavern-token').on('input', function () {
             settings.token = this.value;
             saveSettings();
         });
@@ -188,7 +188,7 @@
         window.addEventListener('beforeunload', function () {
             push('idle');
         });
-        console.log('[rgb-codex-light] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
+        console.log('[orvyn-rgb-tool] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
     }
 
     boot();
