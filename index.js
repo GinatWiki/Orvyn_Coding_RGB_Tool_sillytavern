@@ -11,12 +11,18 @@
  *   generation_error / message_received
  *   story_advance / story_done / story_failed
  *   form_submit / form_done / form_failed
+ *   bridge_hello / bridge_heartbeat
  *   idle
  *
  * Story/form routing: when the shujuku AutoCardUpdaterAPI is available,
  * form fills are driven by registerTableFillStartCallback (form_submit) and
- * registerTableUpdateCallback (form_done). MESSAGE_SENT is then ignored so a
- * form fill cannot be overwritten by story_advance.
+ * registerTableUpdateCallback (form_done). MESSAGE_SENT still pushes
+ * story_advance unless a form fill is active, so story advance keeps working
+ * even if GENERATION_STARTED is missed by a third-party workflow.
+ *
+ * The Bridge URL is auto-synced from the RGB console's source configuration
+ * (consoleUrl /api/bootstrap), so editing the service address in the console
+ * is the single source of truth.
  *
  * Install: copy this folder into
  * <SillyTavern>/public/scripts/extensions/third-party/orvyn-rgb-tool-sillytavern/
@@ -32,9 +38,12 @@
     window.__ORVYN_RGB_TOOL_SILLYTAVERN__ = true;
 
     const EXTENSION_NAME = 'orvyn-rgb-tool-sillytavern';
+    const LS_KEY = 'orvyn-rgb-tool-sillytavern';
+    const VERSION = '0.4.0';
     const DEFAULT_SETTINGS = {
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
+        consoleUrl: 'http://127.0.0.1:7360',
         token: '',
     };
 
@@ -44,7 +53,6 @@
     let storyActive = false;
     let formActive = false;
     let shujukuHooked = false;
-    let fallbackStoryOnMessageSent = true;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -59,17 +67,25 @@
     }
 
     function loadSettings() {
+        let saved = null;
+        try {
+            const raw = localStorage.getItem(LS_KEY);
+            if (raw) saved = JSON.parse(raw);
+        } catch (e) { }
         if (context && context.extensionSettings && context.extensionSettings[EXTENSION_NAME]) {
-            settings = Object.assign({}, DEFAULT_SETTINGS, context.extensionSettings[EXTENSION_NAME]);
+            saved = Object.assign({}, saved || {}, context.extensionSettings[EXTENSION_NAME]);
         }
+        settings = Object.assign({}, DEFAULT_SETTINGS, saved || {});
     }
 
     function saveSettings() {
-        if (!context) return;
-        if (context.extensionSettings) {
+        if (context && context.extensionSettings) {
             context.extensionSettings[EXTENSION_NAME] = settings;
         }
-        if (typeof context.saveSettingsDebounced === 'function') {
+        try {
+            localStorage.setItem(LS_KEY, JSON.stringify(settings));
+        } catch (e) { }
+        if (context && typeof context.saveSettingsDebounced === 'function') {
             context.saveSettingsDebounced();
         }
     }
@@ -143,7 +159,6 @@
         }
         if (ok) {
             shujukuHooked = true;
-            fallbackStoryOnMessageSent = false;
             console.log('[orvyn-rgb-tool] shujuku AutoCardUpdaterAPI hooked');
         }
     }
@@ -191,13 +206,28 @@
             push('story_done');
         });
         on(ET.MESSAGE_SENT, function () {
-            // With shujuku, form_submit comes from its fill-start callback and
-            // story_advance comes from GENERATION_STARTED. Without shujuku,
-            // treat the sent message as a story advance (legacy behavior).
-            if (!fallbackStoryOnMessageSent) return;
+            if (formActive) return;
             storyActive = true;
             push('story_advance');
         });
+    }
+
+    function syncFromConsole() {
+        const base = String(settings.consoleUrl || DEFAULT_SETTINGS.consoleUrl).replace(/\/+$/, '');
+        fetch(base + '/api/bootstrap')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                const src = data && data.sources_config && data.sources_config.sillytavern;
+                if (!src) return;
+                const url = String(src.bridge_url || '').replace(/\/+$/, '');
+                if (url && url !== settings.bridgeUrl) {
+                    settings.bridgeUrl = url;
+                    saveSettings();
+                    console.log('[orvyn-rgb-tool] bridge URL synced from console -> ' + url);
+                    push('bridge_hello', { bridgeUrl: settings.bridgeUrl, version: VERSION });
+                }
+            })
+            .catch(function () { });
     }
 
     function renderSettings() {
@@ -218,9 +248,11 @@
             '    </label>' +
             '    <label for="orvyn-rgb-tool-sillytavern-url">Bridge URL</label>' +
             '    <input id="orvyn-rgb-tool-sillytavern-url" type="text" value="' + escapeHtml(settings.bridgeUrl) + '">' +
+            '    <label for="orvyn-rgb-tool-sillytavern-console">Console URL</label>' +
+            '    <input id="orvyn-rgb-tool-sillytavern-console" type="text" value="' + escapeHtml(settings.consoleUrl) + '">' +
             '    <label for="orvyn-rgb-tool-sillytavern-token">Token (optional)</label>' +
             '    <input id="orvyn-rgb-tool-sillytavern-token" type="password" value="' + escapeHtml(settings.token) + '">' +
-            '    <small>Events are POSTed to {bridgeUrl}/event.</small>' +
+            '    <small>Bridge URL auto-syncs from Console URL /api/bootstrap.</small>' +
             '  </div>' +
             '</div>';
 
@@ -231,6 +263,10 @@
         });
         $('#orvyn-rgb-tool-sillytavern-url').on('input', function () {
             settings.bridgeUrl = this.value;
+            saveSettings();
+        });
+        $('#orvyn-rgb-tool-sillytavern-console').on('input', function () {
+            settings.consoleUrl = this.value;
             saveSettings();
         });
         $('#orvyn-rgb-tool-sillytavern-token').on('input', function () {
@@ -251,9 +287,16 @@
         hookEvents();
         hookShujukuApi();
         renderSettings();
-        window.addEventListener('beforeunload', function () { push('idle'); });
-        // shujuku may load from CDN after the extension boots.
+        syncFromConsole();
+        push('bridge_hello', { bridgeUrl: settings.bridgeUrl, version: VERSION });
+        window.addEventListener('beforeunload', function () {
+            push('idle');
+        });
         setInterval(hookShujukuApi, 2000);
+        setInterval(syncFromConsole, 10000);
+        setInterval(function () {
+            push('bridge_heartbeat', { bridgeUrl: settings.bridgeUrl });
+        }, 30000);
         console.log('[orvyn-rgb-tool] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
     }
 
