@@ -4,22 +4,25 @@ SillyTavern 第三方扩展：把剧情推进 / 填表 / 生成中 / 生成完�
 Orvyn Coding RGB Tool 的本地事件桥（默认 `http://127.0.0.1:7355/event`），
 让物理 RGB 状态灯跟随 SillyTavern 活动变化。
 
-## 三个独立状态源
+## 事件与状态
 
-扩展把事件推到三个独立的 source key，可在主工具 Web 控制台分别配置灯色、
-灯位与优先级：
+所有事件都推到 `sillytavern` 这一个 source。主工具 Web 控制台的
+“可视化灯配置”支持自定义添加状态，并把事件名（触发条件）映射到该状态。
 
-| source         | 含义              | 事件                      | 状态     |
-|----------------|-------------------|---------------------------|----------|
-| sillytavern    | ST 自身 API 调用  | generation_start         | BUSY     |
-|                |                   | generation_done / message_received | SUCCESS → RUNNING |
-|                |                   | generation_stopped       | RUNNING  |
-|                |                   | generation_error         | ERROR    |
-| shujuku_story  | 剧情推进          | story_advance            | BUSY     |
-|                |                   | story_done               | SUCCESS  |
-| shujuku_form   | 填表              | form_submit              | BUSY     |
-|                |                   | form_done                | SUCCESS  |
-| 全部           | 页面关闭/空闲     | idle                     | IDLE     |
+| 事件                 | 含义             | 默认状态 |
+|----------------------|------------------|----------|
+| generation_start     | ST API 生成开始  | busy     |
+| generation_done      | 生成完成         | success  |
+| message_received     | AI 消息接收完成  | success  |
+| generation_stopped   | 用户停止生成     | running  |
+| generation_error     | API 出错         | error    |
+| story_advance        | 剧情推进开始     | story_working |
+| story_failed         | 剧情推进失败     | story_failed |
+| story_done           | 剧情推进完成     | success  |
+| form_submit          | 填表开始         | form_working |
+| form_failed          | 填表失败         | form_failed |
+| form_error           | 填表出错         | form_error |
+| idle                 | 页面关闭/空闲    | idle     |
 
 ## 安装
 
@@ -53,6 +56,5 @@ curl -X POST http://127.0.0.1:7355/event ^
   -d "{\"source\":\"sillytavern\",\"event\":\"story_advance\"}"
 ```
 
-`sillytavern` 灯应进入 BUSY（工作中）；生成完成后短暂显示 SUCCESS（已完成），
-约 5 秒后回到 RUNNING。`shujuku_story` / `shujuku_form` 只在 shujuku 脚本
-加载后跟随剧情推进 / 填表状态。
+`sillytavern` 灯应进入对应状态（如 `story_advance` -> story_working）；
+生成完成短暂显示 SUCCESS 后回到 RUNNING。

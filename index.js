@@ -3,18 +3,15 @@
  * A third-party SillyTavern extension that forwards UI events to the
  * Orvyn RGB Tool local event bridge (default http://127.0.0.1:7355/event).
  *
- * Three independent status sources, each configurable in the RGB web console:
- *   sillytavern    - SillyTavern's own API generation calls
- *   shujuku_story  - shujuku (AlbusKen/shujuku) 剧情推进
- *   shujuku_form   - shujuku 填表
+ * All events are posted with source=sillytavern. The RGB web console maps
+ * event names to (custom) states via its 触发条件 configuration.
  *
  * Events:
- *   sillytavern:    generation_start -> BUSY
- *                   generation_done / message_received -> SUCCESS (then RUNNING)
- *                   generation_stopped -> RUNNING
- *                   generation_error -> ERROR
- *   shujuku_story:  story_advance -> BUSY, story_done -> SUCCESS
- *   shujuku_form:   form_submit -> BUSY, form_done -> SUCCESS
+ *   generation_start / generation_done / generation_stopped
+ *   generation_error / message_received
+ *   story_advance / story_done / story_failed
+ *   form_submit / form_done / form_failed
+ *   idle
  *
  * Install: copy this folder into
  * <SillyTavern>/public/scripts/extensions/third-party/orvyn-rgb-tool-sillytavern/
@@ -35,11 +32,12 @@
         bridgeUrl: 'http://127.0.0.1:7355',
         token: '',
     };
-    const SOURCE_KEYS = ['sillytavern', 'shujuku_story', 'shujuku_form'];
 
     let context = null;
     let settings = Object.assign({}, DEFAULT_SETTINGS);
     let attempts = 0;
+    let storyActive = false;
+    let formActive = false;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -69,10 +67,10 @@
         }
     }
 
-    function push(source, event, payload) {
+    function push(event, payload) {
         if (!settings.enabled) return;
         const base = String(settings.bridgeUrl || DEFAULT_SETTINGS.bridgeUrl).replace(/\/+$/, '');
-        const body = JSON.stringify({ source: source, event: event, payload: payload || {} });
+        const body = JSON.stringify({ source: 'sillytavern', event: event, payload: payload || {} });
         const headers = { 'Content-Type': 'application/json' };
         if (settings.token) {
             headers['Authorization'] = 'Bearer ' + settings.token;
@@ -109,7 +107,8 @@
         if (!api) return;
         if (typeof api.registerTableFillStartCallback === 'function') {
             api.registerTableFillStartCallback(function () {
-                push('shujuku_form', 'form_submit');
+                formActive = true;
+                push('form_submit');
             });
         }
         if (typeof api.registerTableUpdateCallback === 'function') {
@@ -117,7 +116,8 @@
             api.registerTableUpdateCallback(function () {
                 if (timer) clearTimeout(timer);
                 timer = setTimeout(function () {
-                    push('shujuku_form', 'form_done');
+                    formActive = false;
+                    push('form_done');
                 }, 2000);
             });
         }
@@ -126,37 +126,39 @@
 
     function hookEvents() {
         const ET = context.eventTypes;
-        const on = function (type, source, eventName) {
+        const on = function (type, handler) {
             if (!type) return;
             try {
-                context.eventSource.on(type, function () {
-                    push(source, eventName);
-                });
+                context.eventSource.on(type, handler);
             } catch (e) {
                 // Ignore a single unavailable event type.
             }
         };
-        on(ET.GENERATION_STARTED, 'sillytavern', 'generation_start');
-        on(ET.GENERATION_ENDED, 'sillytavern', 'generation_done');
-        on(ET.GENERATION_STOPPED, 'sillytavern', 'generation_stopped');
-        on(ET.GENERATION_ERROR, 'sillytavern', 'generation_error');
-        on(ET.MESSAGE_RECEIVED, 'sillytavern', 'message_received');
-        if (ET.MESSAGE_RECEIVED) {
-            try {
-                context.eventSource.on(ET.MESSAGE_RECEIVED, function () {
-                    if (getShujukuApi()) push('shujuku_story', 'story_done');
-                });
-            } catch (e) {}
-        }
-        if (ET.MESSAGE_SENT) {
-            try {
-                context.eventSource.on(ET.MESSAGE_SENT, function () {
-                    // shujuku starts plot planning after the user submits a
-                    // message; only report it when the script is loaded.
-                    if (getShujukuApi()) push('shujuku_story', 'story_advance');
-                });
-            } catch (e) {}
-        }
+        on(ET.GENERATION_STARTED, function () { push('generation_start'); });
+        on(ET.GENERATION_ENDED, function () { push('generation_done'); });
+        on(ET.GENERATION_STOPPED, function () {
+            storyActive = false;
+            formActive = false;
+            push('generation_stopped');
+        });
+        on(ET.GENERATION_ERROR, function () {
+            push('generation_error');
+            if (formActive) push('form_failed');
+            else if (storyActive) push('story_failed');
+            storyActive = false;
+            formActive = false;
+        });
+        on(ET.MESSAGE_RECEIVED, function () {
+            storyActive = false;
+            formActive = false;
+            push('message_received');
+            push('story_done');
+        });
+        on(ET.MESSAGE_SENT, function () {
+            if (!getShujukuApi()) return;
+            storyActive = true;
+            push('story_advance');
+        });
     }
 
     function renderSettings() {
@@ -210,9 +212,7 @@
         hookEvents();
         hookShujukuApi();
         renderSettings();
-        window.addEventListener('beforeunload', function () {
-            SOURCE_KEYS.forEach(function (key) { push(key, 'idle'); });
-        });
+        window.addEventListener('beforeunload', function () { push('idle'); });
         // shujuku may load from CDN after the extension boots.
         setInterval(hookShujukuApi, 2000);
         console.log('[orvyn-rgb-tool] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
