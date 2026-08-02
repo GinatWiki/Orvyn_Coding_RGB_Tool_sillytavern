@@ -4,7 +4,7 @@
  * Orvyn RGB Tool local event bridge (default http://127.0.0.1:7355/event).
  *
  * All events are posted with source=sillytavern. The RGB web console maps
- * event names to (custom) states via its 触发条件 configuration.
+ * event names to (custom) states via its trigger condition configuration.
  *
  * Events:
  *   generation_start / generation_done / generation_stopped
@@ -12,6 +12,11 @@
  *   story_advance / story_done / story_failed
  *   form_submit / form_done / form_failed
  *   idle
+ *
+ * Story/form routing: when the shujuku AutoCardUpdaterAPI is available,
+ * form fills are driven by registerTableFillStartCallback (form_submit) and
+ * registerTableUpdateCallback (form_done). MESSAGE_SENT is then ignored so a
+ * form fill cannot be overwritten by story_advance.
  *
  * Install: copy this folder into
  * <SillyTavern>/public/scripts/extensions/third-party/orvyn-rgb-tool-sillytavern/
@@ -38,6 +43,8 @@
     let attempts = 0;
     let storyActive = false;
     let formActive = false;
+    let shujukuHooked = false;
+    let fallbackStoryOnMessageSent = true;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -95,33 +102,50 @@
     }
 
     function getShujukuApi() {
-        return window.AutoCardUpdaterAPI ||
-            (window.topLevelWindow && window.topLevelWindow.AutoCardUpdaterAPI) ||
-            null;
+        try {
+            if (window.AutoCardUpdaterAPI) return window.AutoCardUpdaterAPI;
+        } catch (e) { }
+        try {
+            if (window.parent && window.parent.AutoCardUpdaterAPI) return window.parent.AutoCardUpdaterAPI;
+        } catch (e) { }
+        try {
+            if (window.top && window.top.AutoCardUpdaterAPI) return window.top.AutoCardUpdaterAPI;
+        } catch (e) { }
+        return null;
     }
 
-    let shujukuHooked = false;
     function hookShujukuApi() {
         if (shujukuHooked) return;
         const api = getShujukuApi();
         if (!api) return;
+        let ok = false;
         if (typeof api.registerTableFillStartCallback === 'function') {
-            api.registerTableFillStartCallback(function () {
-                formActive = true;
-                push('form_submit');
-            });
+            try {
+                api.registerTableFillStartCallback(function () {
+                    formActive = true;
+                    push('form_submit');
+                });
+                ok = true;
+            } catch (e) { }
         }
         if (typeof api.registerTableUpdateCallback === 'function') {
-            let timer = null;
-            api.registerTableUpdateCallback(function () {
-                if (timer) clearTimeout(timer);
-                timer = setTimeout(function () {
-                    formActive = false;
-                    push('form_done');
-                }, 2000);
-            });
+            try {
+                let timer = null;
+                api.registerTableUpdateCallback(function () {
+                    if (timer) clearTimeout(timer);
+                    timer = setTimeout(function () {
+                        formActive = false;
+                        push('form_done');
+                    }, 2000);
+                });
+                ok = true;
+            } catch (e) { }
         }
-        shujukuHooked = true;
+        if (ok) {
+            shujukuHooked = true;
+            fallbackStoryOnMessageSent = false;
+            console.log('[orvyn-rgb-tool] shujuku AutoCardUpdaterAPI hooked');
+        }
     }
 
     function hookEvents() {
@@ -134,8 +158,19 @@
                 // Ignore a single unavailable event type.
             }
         };
-        on(ET.GENERATION_STARTED, function () { push('generation_start'); });
-        on(ET.GENERATION_ENDED, function () { push('generation_done'); });
+        on(ET.GENERATION_STARTED, function () {
+            if (formActive) {
+                push('form_submit');
+            } else {
+                storyActive = true;
+                push('story_advance');
+            }
+        });
+        on(ET.GENERATION_ENDED, function () {
+            push(formActive ? 'form_done' : 'story_done');
+            storyActive = false;
+            formActive = false;
+        });
         on(ET.GENERATION_STOPPED, function () {
             storyActive = false;
             formActive = false;
@@ -149,13 +184,17 @@
             formActive = false;
         });
         on(ET.MESSAGE_RECEIVED, function () {
+            if (formActive) return;
             storyActive = false;
             formActive = false;
             push('message_received');
             push('story_done');
         });
         on(ET.MESSAGE_SENT, function () {
-            if (!getShujukuApi()) return;
+            // With shujuku, form_submit comes from its fill-start callback and
+            // story_advance comes from GENERATION_STARTED. Without shujuku,
+            // treat the sent message as a story advance (legacy behavior).
+            if (!fallbackStoryOnMessageSent) return;
             storyActive = true;
             push('story_advance');
         });
