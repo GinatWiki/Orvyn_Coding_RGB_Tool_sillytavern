@@ -14,11 +14,13 @@
  *   bridge_hello / bridge_heartbeat
  *   idle
  *
- * Story/form routing: when the shujuku AutoCardUpdaterAPI is available,
- * form fills are driven by registerTableFillStartCallback (form_submit) and
- * registerTableUpdateCallback (form_done). MESSAGE_SENT still pushes
- * story_advance unless a form fill is active, so story advance keeps working
- * even if GENERATION_STARTED is missed by a third-party workflow.
+ * Routing:
+ *   - Normal SillyTavern main API generation  -> generation_start (busy)
+ *   - shujuku plot advance (generateRaw)      -> story_advance
+ *   - shujuku table fill                      -> form_submit
+ * Table fills are driven by registerTableFillStartCallback /
+ * registerTableUpdateCallback. TavernHelper.generateRaw is wrapped so
+ * shujuku's plot/table flows are distinguishable from the main API.
  *
  * The Bridge URL is auto-synced from the RGB console's source configuration
  * (consoleUrl /api/bootstrap), so editing the service address in the console
@@ -39,7 +41,7 @@
 
     const EXTENSION_NAME = 'orvyn-rgb-tool-sillytavern';
     const LS_KEY = 'orvyn-rgb-tool-sillytavern';
-    const VERSION = '0.4.1';
+    const VERSION = '0.4.2';
     const DEFAULT_SETTINGS = {
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
@@ -54,6 +56,9 @@
     let formActive = false;
     let shujukuHooked = false;
     let lastChatKey = null;
+    let rawGenerationActive = false;
+    let generationActive = false;
+    let tavernHelperHooked = false;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -164,6 +169,76 @@
         }
     }
 
+    function hookTavernHelper() {
+        if (tavernHelperHooked) return;
+        const th = window.TavernHelper;
+        if (!th) return;
+        let hooked = false;
+        if (typeof th.generateRaw === 'function') {
+            const originalRaw = th.generateRaw;
+            th.generateRaw = function () {
+                const args = arguments;
+                rawGenerationActive = true;
+                generationActive = true;
+                if (formActive) push('form_submit');
+                else { storyActive = true; push('story_advance'); }
+                try {
+                    return Promise.resolve(originalRaw.apply(this, args)).then(function (value) {
+                        rawGenerationActive = false;
+                        generationActive = false;
+                        if (formActive) { formActive = false; push('form_done'); }
+                        else { storyActive = false; push('story_done'); }
+                        return value;
+                    }, function (err) {
+                        rawGenerationActive = false;
+                        generationActive = false;
+                        storyActive = false;
+                        if (formActive) { formActive = false; push('form_failed'); }
+                        else push('story_failed');
+                        throw err;
+                    });
+                } catch (err) {
+                    rawGenerationActive = false;
+                    generationActive = false;
+                    storyActive = false;
+                    push('generation_error');
+                    throw err;
+                }
+            };
+            hooked = true;
+        }
+        if (typeof th.generate === 'function') {
+            const originalGenerate = th.generate;
+            th.generate = function () {
+                const args = arguments;
+                generationActive = true;
+                if (formActive) push('form_submit');
+                else push('generation_start');
+                try {
+                    return Promise.resolve(originalGenerate.apply(this, args)).then(function (value) {
+                        generationActive = false;
+                        if (formActive) { formActive = false; push('form_done'); }
+                        else push('generation_done');
+                        return value;
+                    }, function (err) {
+                        generationActive = false;
+                        push('generation_error');
+                        throw err;
+                    });
+                } catch (err) {
+                    generationActive = false;
+                    push('generation_error');
+                    throw err;
+                }
+            };
+            hooked = true;
+        }
+        if (hooked) {
+            tavernHelperHooked = true;
+            console.log('[orvyn-rgb-tool] TavernHelper generate/generateRaw hooked');
+        }
+    }
+
     function hookEvents() {
         const ET = context.eventTypes;
         const on = function (type, handler) {
@@ -175,41 +250,64 @@
             }
         };
         on(ET.GENERATION_STARTED, function () {
-            if (formActive) {
+            if (rawGenerationActive) {
+                if (formActive) push('form_submit');
+                else { storyActive = true; push('story_advance'); }
+            } else if (formActive) {
                 push('form_submit');
             } else {
-                storyActive = true;
-                push('story_advance');
+                generationActive = true;
+                push('generation_start');
             }
         });
         on(ET.GENERATION_ENDED, function () {
-            push(formActive ? 'form_done' : 'story_done');
+            if (rawGenerationActive) {
+                rawGenerationActive = false;
+                push(formActive ? 'form_done' : 'story_done');
+            } else if (formActive) {
+                push('form_done');
+            } else {
+                push('generation_done');
+            }
             storyActive = false;
             formActive = false;
+            generationActive = false;
         });
         on(ET.GENERATION_STOPPED, function () {
             storyActive = false;
             formActive = false;
+            generationActive = false;
+            rawGenerationActive = false;
             push('generation_stopped');
         });
         on(ET.GENERATION_ERROR, function () {
             push('generation_error');
             if (formActive) push('form_failed');
-            else if (storyActive) push('story_failed');
+            else if (storyActive || rawGenerationActive) push('story_failed');
             storyActive = false;
             formActive = false;
+            generationActive = false;
+            rawGenerationActive = false;
         });
         on(ET.MESSAGE_RECEIVED, function () {
             if (formActive) return;
+            const wasRaw = rawGenerationActive;
             storyActive = false;
             formActive = false;
+            generationActive = false;
+            rawGenerationActive = false;
             push('message_received');
-            push('story_done');
+            push(wasRaw ? 'story_done' : 'generation_done');
         });
         on(ET.MESSAGE_SENT, function () {
             if (formActive) return;
-            storyActive = true;
-            push('story_advance');
+            if (rawGenerationActive) {
+                storyActive = true;
+                push('story_advance');
+            } else {
+                generationActive = true;
+                push('generation_start');
+            }
         });
     }
 
@@ -253,12 +351,20 @@
                 (last.name && context.name1 && last.name === context.name1);
             if (isUser) {
                 if (formActive) return;
-                storyActive = true;
-                push('story_advance');
+                if (rawGenerationActive) {
+                    storyActive = true;
+                    push('story_advance');
+                } else {
+                    generationActive = true;
+                    push('generation_start');
+                }
             } else {
+                const wasRaw = rawGenerationActive;
                 storyActive = false;
                 formActive = false;
-                push('story_done');
+                generationActive = false;
+                rawGenerationActive = false;
+                push(wasRaw ? 'story_done' : 'generation_done');
             }
         }, 1200);
     }
@@ -326,6 +432,7 @@
         loadSettings();
         hookEvents();
         hookShujukuApi();
+        hookTavernHelper();
         watchChat();
         renderSettings();
         syncFromConsole();
@@ -334,6 +441,7 @@
             push('idle');
         });
         setInterval(hookShujukuApi, 2000);
+        setInterval(hookTavernHelper, 2000);
         setInterval(syncFromConsole, 10000);
         setInterval(function () {
             push('bridge_heartbeat', { bridgeUrl: settings.bridgeUrl });
