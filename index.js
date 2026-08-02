@@ -39,7 +39,7 @@
 
     const EXTENSION_NAME = 'orvyn-rgb-tool-sillytavern';
     const LS_KEY = 'orvyn-rgb-tool-sillytavern';
-    const VERSION = '0.4.0';
+    const VERSION = '0.4.1';
     const DEFAULT_SETTINGS = {
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
@@ -53,6 +53,7 @@
     let storyActive = false;
     let formActive = false;
     let shujukuHooked = false;
+    let lastChatKey = null;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -230,6 +231,33 @@
             .catch(function () { });
     }
 
+    function watchChat() {
+        // Fallback for third-party workflows that do not emit the standard
+        // SillyTavern events: detect new chat messages and map them to story
+        // advance/done. Prevents the extension from being silent on generate.
+        if (!context || !Array.isArray(context.chat)) return;
+        setInterval(function () {
+            if (!context || !Array.isArray(context.chat)) return;
+            const chat = context.chat;
+            const last = chat[chat.length - 1];
+            if (!last) return;
+            const key = (last.id != null ? last.id : '') + ':' + (last.mesId != null ? last.mesId : '') + ':' + chat.length;
+            if (key === lastChatKey) return;
+            lastChatKey = key;
+            const isUser = last.is_user || last.role === 'user' ||
+                (last.name && context.name1 && last.name === context.name1);
+            if (isUser) {
+                if (formActive) return;
+                storyActive = true;
+                push('story_advance');
+            } else {
+                storyActive = false;
+                formActive = false;
+                push('story_done');
+            }
+        }, 1200);
+    }
+
     function renderSettings() {
         const container = document.getElementById('extensions_settings');
         if (!container || typeof window.jQuery === 'undefined') return;
@@ -253,6 +281,7 @@
             '    <label for="orvyn-rgb-tool-sillytavern-token">Token (optional)</label>' +
             '    <input id="orvyn-rgb-tool-sillytavern-token" type="password" value="' + escapeHtml(settings.token) + '">' +
             '    <small>Bridge URL auto-syncs from Console URL /api/bootstrap.</small>' +
+            '    <button id="orvyn-rgb-tool-sillytavern-test" type="button">Send test event</button>' +
             '  </div>' +
             '</div>';
 
@@ -273,6 +302,12 @@
             settings.token = this.value;
             saveSettings();
         });
+        $('#orvyn-rgb-tool-sillytavern-test').on('click', function () {
+            push('story_advance', { manual: true });
+            setTimeout(function () {
+                push('story_done', { manual: true });
+            }, 1500);
+        });
     }
 
     function boot() {
@@ -286,6 +321,7 @@
         loadSettings();
         hookEvents();
         hookShujukuApi();
+        watchChat();
         renderSettings();
         syncFromConsole();
         push('bridge_hello', { bridgeUrl: settings.bridgeUrl, version: VERSION });
@@ -296,7 +332,7 @@
         setInterval(syncFromConsole, 10000);
         setInterval(function () {
             push('bridge_heartbeat', { bridgeUrl: settings.bridgeUrl });
-        }, 30000);
+        }, 10000);
         console.log('[orvyn-rgb-tool] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
     }
 
