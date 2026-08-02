@@ -1,11 +1,9 @@
 {
   "display_name": "Orvyn RGB Tool - SillyTavern Bridge",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "homepage": "https://github.com/GinatWiki/Orvyn_Coding_RGB_Tool_sillytavern",
   "author": "Orvyn Coding RGB Tool contributors",
   "description": "Pushes SillyTavern story/generation events to the Orvyn RGB Tool event bridge at 127.0.0.1:7355.",
   "license": "MIT",
-  "javascript": [
-    "index.js"
-  ]
+  "js": "index.js"
 }
