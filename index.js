@@ -2,14 +2,19 @@
  *
  * A third-party SillyTavern extension that forwards UI events to the
  * Orvyn RGB Tool local event bridge (default http://127.0.0.1:7355/event).
- * The bridge maps these events to states on the physical RGB light:
  *
- *   story_advance       -> BUSY
- *   form_submit         -> BUSY
- *   generation_start    -> BUSY
- *   generation_done     -> RUNNING
- *   generation_error    -> ERROR
- *   idle                -> IDLE
+ * Three independent status sources, each configurable in the RGB web console:
+ *   sillytavern    - SillyTavern's own API generation calls
+ *   shujuku_story  - shujuku (AlbusKen/shujuku) 剧情推进
+ *   shujuku_form   - shujuku 填表
+ *
+ * Events:
+ *   sillytavern:    generation_start -> BUSY
+ *                   generation_done / message_received -> SUCCESS (then RUNNING)
+ *                   generation_stopped -> RUNNING
+ *                   generation_error -> ERROR
+ *   shujuku_story:  story_advance -> BUSY, story_done -> SUCCESS
+ *   shujuku_form:   form_submit -> BUSY, form_done -> SUCCESS
  *
  * Install: copy this folder into
  * <SillyTavern>/public/scripts/extensions/third-party/orvyn-rgb-tool-sillytavern/
@@ -29,8 +34,8 @@
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
         token: '',
-        watchDom: true,
     };
+    const SOURCE_KEYS = ['sillytavern', 'shujuku_story', 'shujuku_form'];
 
     let context = null;
     let settings = Object.assign({}, DEFAULT_SETTINGS);
@@ -64,10 +69,10 @@
         }
     }
 
-    function push(event, payload) {
+    function push(source, event, payload) {
         if (!settings.enabled) return;
         const base = String(settings.bridgeUrl || DEFAULT_SETTINGS.bridgeUrl).replace(/\/+$/, '');
-        const body = JSON.stringify({ source: 'sillytavern', event: event, payload: payload || {} });
+        const body = JSON.stringify({ source: source, event: event, payload: payload || {} });
         const headers = { 'Content-Type': 'application/json' };
         if (settings.token) {
             headers['Authorization'] = 'Bearer ' + settings.token;
@@ -91,47 +96,67 @@
         return !!(context && context.eventSource && context.eventTypes);
     }
 
+    function getShujukuApi() {
+        return window.AutoCardUpdaterAPI ||
+            (window.topLevelWindow && window.topLevelWindow.AutoCardUpdaterAPI) ||
+            null;
+    }
+
+    let shujukuHooked = false;
+    function hookShujukuApi() {
+        if (shujukuHooked) return;
+        const api = getShujukuApi();
+        if (!api) return;
+        if (typeof api.registerTableFillStartCallback === 'function') {
+            api.registerTableFillStartCallback(function () {
+                push('shujuku_form', 'form_submit');
+            });
+        }
+        if (typeof api.registerTableUpdateCallback === 'function') {
+            let timer = null;
+            api.registerTableUpdateCallback(function () {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    push('shujuku_form', 'form_done');
+                }, 2000);
+            });
+        }
+        shujukuHooked = true;
+    }
+
     function hookEvents() {
         const ET = context.eventTypes;
-        const events = [
-            [ET.GENERATION_STARTED, 'generation_start'],
-            [ET.GENERATION_ENDED, 'generation_done'],
-            [ET.GENERATION_STOPPED, 'generation_done'],
-            [ET.GENERATION_ERROR, 'generation_error'],
-            [ET.MESSAGE_SENT, 'form_submit'],
-            [ET.MESSAGE_RECEIVED, 'story_advance'],
-        ];
-        let hooked = 0;
-        events.forEach(function (pair) {
-            if (!pair[0]) return;
+        const on = function (type, source, eventName) {
+            if (!type) return;
             try {
-                context.eventSource.on(pair[0], function () {
-                    push(pair[1]);
+                context.eventSource.on(type, function () {
+                    push(source, eventName);
                 });
-                hooked += 1;
             } catch (e) {
                 // Ignore a single unavailable event type.
             }
-        });
-        return hooked > 0;
-    }
-
-    function watchChatDom() {
-        const chat = document.getElementById('chat') || document.querySelector('#chat');
-        if (!chat || !('MutationObserver' in window)) return;
-        let settleTimer = null;
-        new MutationObserver(function (mutations) {
-            let added = 0;
-            mutations.forEach(function (m) {
-                added += m.addedNodes.length;
-            });
-            if (!added) return;
-            push('story_advance');
-            if (settleTimer) clearTimeout(settleTimer);
-            settleTimer = setTimeout(function () {
-                push('generation_done');
-            }, 1500);
-        }).observe(chat, { childList: true, subtree: true });
+        };
+        on(ET.GENERATION_STARTED, 'sillytavern', 'generation_start');
+        on(ET.GENERATION_ENDED, 'sillytavern', 'generation_done');
+        on(ET.GENERATION_STOPPED, 'sillytavern', 'generation_stopped');
+        on(ET.GENERATION_ERROR, 'sillytavern', 'generation_error');
+        on(ET.MESSAGE_RECEIVED, 'sillytavern', 'message_received');
+        if (ET.MESSAGE_RECEIVED) {
+            try {
+                context.eventSource.on(ET.MESSAGE_RECEIVED, function () {
+                    if (getShujukuApi()) push('shujuku_story', 'story_done');
+                });
+            } catch (e) {}
+        }
+        if (ET.MESSAGE_SENT) {
+            try {
+                context.eventSource.on(ET.MESSAGE_SENT, function () {
+                    // shujuku starts plot planning after the user submits a
+                    // message; only report it when the script is loaded.
+                    if (getShujukuApi()) push('shujuku_story', 'story_advance');
+                });
+            } catch (e) {}
+        }
     }
 
     function renderSettings() {
@@ -176,18 +201,20 @@
     function boot() {
         if (!initContext()) {
             attempts += 1;
-            if (attempts < 15) {
+            if (attempts < 30) {
                 setTimeout(boot, 1000);
             }
             return;
         }
         loadSettings();
         hookEvents();
-        if (settings.watchDom) watchChatDom();
+        hookShujukuApi();
         renderSettings();
         window.addEventListener('beforeunload', function () {
-            push('idle');
+            SOURCE_KEYS.forEach(function (key) { push(key, 'idle'); });
         });
+        // shujuku may load from CDN after the extension boots.
+        setInterval(hookShujukuApi, 2000);
         console.log('[orvyn-rgb-tool] SillyTavern bridge loaded -> ' + settings.bridgeUrl + '/event');
     }
 

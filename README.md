@@ -4,16 +4,22 @@ SillyTavern 第三方扩展：把剧情推进 / 填表 / 生成中 / 生成完�
 Orvyn Coding RGB Tool 的本地事件桥（默认 `http://127.0.0.1:7355/event`），
 让物理 RGB 状态灯跟随 SillyTavern 活动变化。
 
-## 事件与状态
+## 三个独立状态源
 
-| 事件               | 含义           | 状态     |
-|--------------------|----------------|----------|
-| generation_start   | 生成开始       | BUSY     |
-| story_advance      | 剧情推进       | BUSY     |
-| form_submit        | 填表           | BUSY     |
-| generation_done    | 生成完成       | RUNNING  |
-| generation_error   | 生成出错       | ERROR    |
-| idle               | 页面关闭/空闲  | IDLE     |
+扩展把事件推到三个独立的 source key，可在主工具 Web 控制台分别配置灯色、
+灯位与优先级：
+
+| source         | 含义              | 事件                      | 状态     |
+|----------------|-------------------|---------------------------|----------|
+| sillytavern    | ST 自身 API 调用  | generation_start         | BUSY     |
+|                |                   | generation_done / message_received | SUCCESS → RUNNING |
+|                |                   | generation_stopped       | RUNNING  |
+|                |                   | generation_error         | ERROR    |
+| shujuku_story  | 剧情推进          | story_advance            | BUSY     |
+|                |                   | story_done               | SUCCESS  |
+| shujuku_form   | 填表              | form_submit              | BUSY     |
+|                |                   | form_done                | SUCCESS  |
+| 全部           | 页面关闭/空闲     | idle                     | IDLE     |
 
 ## 安装
 
@@ -47,4 +53,6 @@ curl -X POST http://127.0.0.1:7355/event ^
   -d "{\"source\":\"sillytavern\",\"event\":\"story_advance\"}"
 ```
 
-灯应进入 BUSY（橙色呼吸），约 30 秒后回到 RUNNING。
+`sillytavern` 灯应进入 BUSY（工作中）；生成完成后短暂显示 SUCCESS（已完成），
+约 5 秒后回到 RUNNING。`shujuku_story` / `shujuku_form` 只在 shujuku 脚本
+加载后跟随剧情推进 / 填表状态。
