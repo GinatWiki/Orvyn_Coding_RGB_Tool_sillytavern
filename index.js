@@ -236,6 +236,11 @@
         // SillyTavern events: detect new chat messages and map them to story
         // advance/done. Prevents the extension from being silent on generate.
         if (!context || !Array.isArray(context.chat)) return;
+        const initial = context.chat[context.chat.length - 1];
+        if (initial) {
+            lastChatKey = (initial.id != null ? initial.id : '') + ':' +
+                (initial.mesId != null ? initial.mesId : '') + ':' + context.chat.length;
+        }
         setInterval(function () {
             if (!context || !Array.isArray(context.chat)) return;
             const chat = context.chat;
