@@ -351,6 +351,9 @@
                 generationActive = true;
                 push('generation_start');
             } else {
+                // Generation still in progress: don't push done prematurely.
+                // The GENERATION_ENDED / MESSAGE_RECEIVED events will handle it.
+                if (generationActive || rawGenerationActive) return;
                 const wasRaw = rawGenerationActive;
                 storyActive = false;
                 formActive = false;
