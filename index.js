@@ -183,7 +183,7 @@
                 rawGenerationActive = true;
                 generationActive = true;
                 if (formActive) push('form_submit');
-                else push('generation_start');
+                else { storyActive = true; push('story_advance'); }
                 try {
                     return Promise.resolve(originalRaw.apply(this, args)).then(function (value) {
                         rawGenerationActive = false;
@@ -254,7 +254,7 @@
         on(ET.GENERATION_STARTED, function () {
             if (rawGenerationActive) {
                 if (formActive) push('form_submit');
-                else push('generation_start');
+                else { storyActive = true; push('story_advance'); }
             } else if (formActive) {
                 push('form_submit');
             } else {
@@ -348,8 +348,13 @@
                 (last.name && context.name1 && last.name === context.name1);
             if (isUser) {
                 if (formActive) return;
-                generationActive = true;
-                push('generation_start');
+                if (rawGenerationActive) {
+                    storyActive = true;
+                    push('story_advance');
+                } else {
+                    generationActive = true;
+                    push('generation_start');
+                }
             } else {
                 // Generation still in progress: don't push done prematurely.
                 // The GENERATION_ENDED / MESSAGE_RECEIVED events will handle it.
