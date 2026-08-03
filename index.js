@@ -1,4 +1,4 @@
-/* Orvyn RGB Tool - SillyTavern bridge.
+﻿/* Orvyn RGB Tool - SillyTavern bridge.
  *
  * A third-party SillyTavern extension that forwards UI events to the
  * Orvyn RGB Tool local event bridge (default http://127.0.0.1:7355/event).
@@ -183,7 +183,7 @@
                 rawGenerationActive = true;
                 generationActive = true;
                 if (formActive) push('form_submit');
-                else { storyActive = true; push('story_advance'); }
+                else push('generation_start');
                 try {
                     return Promise.resolve(originalRaw.apply(this, args)).then(function (value) {
                         rawGenerationActive = false;
@@ -254,7 +254,7 @@
         on(ET.GENERATION_STARTED, function () {
             if (rawGenerationActive) {
                 if (formActive) push('form_submit');
-                else { storyActive = true; push('story_advance'); }
+                else push('generation_start');
             } else if (formActive) {
                 push('form_submit');
             } else {
@@ -303,13 +303,8 @@
         });
         on(ET.MESSAGE_SENT, function () {
             if (formActive) return;
-            if (rawGenerationActive) {
-                storyActive = true;
-                push('story_advance');
-            } else {
-                generationActive = true;
-                push('generation_start');
-            }
+            generationActive = true;
+            push('generation_start');
         });
     }
 
@@ -353,13 +348,8 @@
                 (last.name && context.name1 && last.name === context.name1);
             if (isUser) {
                 if (formActive) return;
-                if (rawGenerationActive) {
-                    storyActive = true;
-                    push('story_advance');
-                } else {
-                    generationActive = true;
-                    push('generation_start');
-                }
+                generationActive = true;
+                push('generation_start');
             } else {
                 const wasRaw = rawGenerationActive;
                 storyActive = false;
