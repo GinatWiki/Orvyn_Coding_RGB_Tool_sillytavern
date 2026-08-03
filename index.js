@@ -62,6 +62,16 @@
     let tavernHelperHooked = false;
     let _doneTimer = null;
     let _doneEvent = null;
+    // Debounced done-event pusher: resets the timer on each call so rapid
+    // MESSAGE_RECEIVED events during streaming don't flood the bridge.
+    function scheduleDone(event) {
+        if (_doneTimer) clearTimeout(_doneTimer);
+        _doneEvent = event;
+        _doneTimer = setTimeout(function () {
+            _doneTimer = null;
+            push(_doneEvent);
+        }, 200);
+    }
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -298,14 +308,14 @@
             rawGenerationActive = false;
         });
         on(ET.MESSAGE_RECEIVED, function () {
+            // MESSAGE_RECEIVED fires during streaming for each received token.
+            // Don't push done events here - GENERATION_ENDED handles completion.
             if (formActive) return;
-            const wasRaw = rawGenerationActive;
+            // Update flags only: no state change to avoid green light during streaming.
             storyActive = false;
             formActive = false;
             generationActive = false;
             rawGenerationActive = false;
-            push('message_received');
-            scheduleDone(wasRaw ? 'story_done' : 'generation_done');
         });
         on(ET.MESSAGE_SENT, function () {
             if (formActive) return;
