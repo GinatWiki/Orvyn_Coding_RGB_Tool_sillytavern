@@ -58,6 +58,7 @@
     let lastChatKey = null;
     let rawGenerationActive = false;
     let generationActive = false;
+    let generationCancelled = false;
     let tavernHelperHooked = false;
     let _doneTimer = null;
     let _doneEvent = null;
@@ -180,6 +181,7 @@
             const originalRaw = th.generateRaw;
             th.generateRaw = function () {
                 const args = arguments;
+                generationCancelled = false;
                 rawGenerationActive = true;
                 generationActive = true;
                 if (formActive) push('form_submit');
@@ -195,6 +197,7 @@
                         rawGenerationActive = false;
                         generationActive = false;
                         storyActive = false;
+                        generationCancelled = true;
                         if (formActive) { formActive = false; push('form_failed'); }
                         else push('story_failed');
                         throw err;
@@ -213,6 +216,7 @@
             const originalGenerate = th.generate;
             th.generate = function () {
                 const args = arguments;
+                if (generationCancelled) { return; }
                 generationActive = true;
                 if (formActive) push('form_submit');
                 else push('generation_start');
@@ -224,11 +228,13 @@
                         return value;
                     }, function (err) {
                         generationActive = false;
+                        generationCancelled = true;
                         push('generation_error');
                         throw err;
                     });
                 } catch (err) {
                     generationActive = false;
+                    generationCancelled = true;
                     push('generation_error');
                     throw err;
                 }
