@@ -41,7 +41,7 @@
 
     const EXTENSION_NAME = 'orvyn-rgb-tool-sillytavern';
     const LS_KEY = 'orvyn-rgb-tool-sillytavern';
-    const VERSION = '0.4.2';
+    const VERSION = '0.4.3';
     const DEFAULT_SETTINGS = {
         enabled: true,
         bridgeUrl: 'http://127.0.0.1:7355',
@@ -59,6 +59,8 @@
     let rawGenerationActive = false;
     let generationActive = false;
     let tavernHelperHooked = false;
+    let _doneTimer = null;
+    let _doneEvent = null;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -157,7 +159,7 @@
                     if (timer) clearTimeout(timer);
                     timer = setTimeout(function () {
                         formActive = false;
-                        push('form_done');
+                        scheduleDone('form_done');
                     }, 2000);
                 });
                 ok = true;
@@ -186,8 +188,8 @@
                     return Promise.resolve(originalRaw.apply(this, args)).then(function (value) {
                         rawGenerationActive = false;
                         generationActive = false;
-                        if (formActive) { formActive = false; push('form_done'); }
-                        else { storyActive = false; push('story_done'); }
+                        if (formActive) { formActive = false; scheduleDone('form_done'); }
+                        else { storyActive = false; scheduleDone('story_done'); }
                         return value;
                     }, function (err) {
                         rawGenerationActive = false;
@@ -217,8 +219,8 @@
                 try {
                     return Promise.resolve(originalGenerate.apply(this, args)).then(function (value) {
                         generationActive = false;
-                        if (formActive) { formActive = false; push('form_done'); }
-                        else push('generation_done');
+                        if (formActive) { formActive = false; scheduleDone('form_done'); }
+                        else scheduleDone('generation_done');
                         return value;
                     }, function (err) {
                         generationActive = false;
@@ -263,11 +265,11 @@
         on(ET.GENERATION_ENDED, function () {
             if (rawGenerationActive) {
                 rawGenerationActive = false;
-                push(formActive ? 'form_done' : 'story_done');
+                scheduleDone(formActive ? 'form_done' : 'story_done');
             } else if (formActive) {
-                push('form_done');
+                scheduleDone('form_done');
             } else {
-                push('generation_done');
+                scheduleDone('generation_done');
             }
             storyActive = false;
             formActive = false;
@@ -297,7 +299,7 @@
             generationActive = false;
             rawGenerationActive = false;
             push('message_received');
-            push(wasRaw ? 'story_done' : 'generation_done');
+            scheduleDone(wasRaw ? 'story_done' : 'generation_done');
         });
         on(ET.MESSAGE_SENT, function () {
             if (formActive) return;
@@ -364,7 +366,7 @@
                 formActive = false;
                 generationActive = false;
                 rawGenerationActive = false;
-                push(wasRaw ? 'story_done' : 'generation_done');
+                scheduleDone(wasRaw ? 'story_done' : 'generation_done');
             }
         }, 1200);
     }
